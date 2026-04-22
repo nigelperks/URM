@@ -10,6 +10,8 @@
 #include <stdbool.h>
 #include <assert.h>
 
+#define INST_FIELD (20)  // output field for instruction number and human-readable instruction 
+
 static void fatal(const char* fmt, ...) {
   va_list ap;
   va_start(ap, fmt);
@@ -177,16 +179,20 @@ static Program* load_program(const char* fname) {
   return p;
 }
 
-static void print_inst(unsigned n, const ProgramInstruction* inst) {
-  printf("%5u %c(%llu", n, inst->minst->mnemonic, (unsigned long long) inst->argv[0]);
+static int print_inst(unsigned instno, const ProgramInstruction* inst) {
+  int printed = printf("%5u %c(%llu", instno, inst->minst->mnemonic, (unsigned long long) inst->argv[0]);
   for (unsigned i = 1; i < inst->minst->argc; i++)
-    printf(",%llu", (unsigned long long) inst->argv[i]);
-  puts(")");
+    printed += printf(",%llu", (unsigned long long) inst->argv[i]);
+  fputs(")", stdout);
+  printed++;
+  return printed;
 }
 
 static void list_program(const Program* p) {
-  for (unsigned i = 1; i < p->ninst; i++)
+  for (unsigned i = 1; i < p->ninst; i++) {
     print_inst(i, &p->inst[i]);
+    putchar('\n');
+  }
 }
 
 static Integer largest_register_number(const Program* p, int argc) {
@@ -225,18 +231,25 @@ static void delete_machine(Machine* m) {
   }
 }
 
-static void trace(const Machine* m) {
-  if (m->pc == -1)
+static void trace(const Machine* m, const Program* p) {
+  unsigned n = 0;
+  if (m->pc == -1) {
     printf("%5s ", "STOP");
+    n = 6;
+  }
   else
-    printf("%5u ", m->pc);
+    n = print_inst(m->pc, &p->inst[m->pc]);
+  putchar(' ');
+  for (n++; n < INST_FIELD; n++)
+    putchar(' ');
+
   for (Integer i = 1; i < m->nreg; i++)
     printf("%5u ", m->regs[i]);
   putchar('\n');
 }
 
 static void trace_heading(Integer nreg) {
-  printf("%5s ", "INST");
+  printf("%-*s", INST_FIELD, " INST");
   for (Integer i = 1; i < nreg; i++) {
     char buf[32];
     sprintf(buf, "R%u", i);
@@ -274,11 +287,11 @@ static void run_program(Machine* m, const Program* p) {
   m->pc = 1;
   trace_heading(m->nreg);
   while (m->pc < p->ninst) {
-    trace(m);
+    trace(m, p);
     execute(m, &p->inst[m->pc]);
   }
   m->pc = -1;
-  trace(m);
+  trace(m, p);
 }
 
 int main(int argc, char* argv[]) {
