@@ -21,6 +21,7 @@ enum token_type {
   TOK_VAR,
   TOK_NUM,
   // keywords
+  TOK_INC,
   TOK_ZERO,
 };
 
@@ -28,6 +29,7 @@ static const struct keyword {
   char* name;
   int token;
 } keywords[] = {
+  { "inc", TOK_INC },
   { "zero", TOK_ZERO },
   { NULL, TOK_INVALID },
 };
@@ -65,6 +67,7 @@ struct token {
 
 static struct token get_token(char* start, char* *next);
 
+static char* inc_statement(struct codegen * gen, unsigned lineno, char* args);
 static char* zero_statement(struct codegen * gen, unsigned lineno, char* args);
 
 static void parse_statement(struct codegen * gen, unsigned lineno, char* buf) {
@@ -73,6 +76,7 @@ static void parse_statement(struct codegen * gen, unsigned lineno, char* buf) {
   struct token tok = get_token(start, &next);
   if (tok.type != TOK_EOL) {
     switch (tok.type) {
+      case TOK_INC: next = inc_statement(gen, lineno, next); break;
       case TOK_ZERO: next = zero_statement(gen, lineno, next); break;
       default: error(lineno, tok.text, "statement expected");
     }
@@ -106,6 +110,19 @@ static struct symbol * insert(const char* name, unsigned reg, unsigned lineno) {
   return &symtab[nsym++];
 }
 
+static unsigned variable_register(struct codegen * gen, const char* var, unsigned lineno) {
+  struct symbol * sym = lookup(var);
+  unsigned reg;
+  if (sym)
+    reg = sym->reg;
+  else {
+    gen->nreg++;
+    reg = gen->nreg;
+    insert(var, reg, lineno);
+  }
+  return reg;
+}
+
 static void emit(struct codegen * gen, const char* fmt, ...) {
   gen->nline++;
   printf("%u ", gen->nline);
@@ -118,22 +135,29 @@ static void emit(struct codegen * gen, const char* fmt, ...) {
   putchar('\n');
 }
 
+static char* get_variable(unsigned lineno, char* buf, char* *next);
+
 static char* zero_statement(struct codegen * gen, unsigned lineno, char* args) {
   char* next;
-  struct token tok = get_token(args, &next);
-  if (tok.type != TOK_VAR)
-    error(lineno, tok.text, "variable expected");
-  struct symbol * sym = lookup(tok.text);
-  unsigned reg;
-  if (sym)
-    reg = sym->reg;
-  else {
-    gen->nreg++;
-    reg = gen->nreg;
-    insert(tok.text, reg, lineno);
-  }
+  char* var = get_variable(lineno, args, &next);
+  unsigned reg = variable_register(gen, var, lineno);
   emit(gen, "Z(%u)", reg);
   return next;
+}
+
+static char* inc_statement(struct codegen * gen, unsigned lineno, char* args) {
+  char* next;
+  char* var = get_variable(lineno, args, &next);
+  unsigned reg = variable_register(gen, var, lineno);
+  emit(gen, "S(%u)", reg);
+  return next;
+}
+
+static char* get_variable(unsigned lineno, char* buf, char* *next) {
+  struct token tok = get_token(buf, next);
+  if (tok.type != TOK_VAR)
+    error(lineno, tok.text, "variable expected");
+  return tok.text;
 }
 
 static char* demarcate_token(char* start, char* *next);
