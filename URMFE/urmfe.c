@@ -17,6 +17,8 @@
 // foo := 0                    --> Z(n)
 // foo := foo + 1              --> S(n)
 // bar := foo                  --> C(n,m)
+//
+// declare n, m ; allocate next registers to variables n, m
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -55,6 +57,7 @@ enum token_type {
   TOK_NUM,
   // keywords
   TOK_COPY,
+  TOK_DECLARE,
   TOK_GOTO,
   TOK_IF,
   TOK_INC,
@@ -68,6 +71,7 @@ static const struct keyword {
   int token;
 } keywords[] = {
   { "copy", TOK_COPY },
+  { "declare", TOK_DECLARE },
   { "goto", TOK_GOTO },
   { "if", TOK_IF },
   { "inc", TOK_INC },
@@ -141,6 +145,7 @@ static void init_lex(struct lex * lex, unsigned lineno, const char* buf) {
 static int get_token(struct lex *);
 
 static void copy_statement(struct codegen * gen, struct lex *);
+static void declare_statement(struct codegen * gen, struct lex *);
 static void goto_statement(struct codegen * gen, struct lex *);
 static void if_statement(struct codegen * gen, struct lex *);
 static void inc_statement(struct codegen * gen, struct lex *);
@@ -154,6 +159,7 @@ static void parse_statement(struct codegen * gen, unsigned lineno, char* buf) {
   if (tok != TOK_EOL) {
     switch (tok) {
       case TOK_COPY: copy_statement(gen, &lex); break;
+      case TOK_DECLARE: declare_statement(gen, &lex); break;
       case TOK_GOTO: goto_statement(gen, &lex); break;
       case TOK_IF: if_statement(gen, &lex); break;
       case TOK_INC: inc_statement(gen, &lex); break;
@@ -230,6 +236,16 @@ static unsigned variable_register(struct codegen * gen, const char* var, unsigne
     insert_symbol(var, reg, lineno);
   }
   return reg;
+}
+
+static void declare_variable(struct codegen * gen, const char* var, unsigned lineno) {
+  struct symbol * sym = lookup_symbol(var);
+  unsigned reg;
+  if (sym)
+    error(lineno, var, "variable already used");
+  gen->nreg++;
+  reg = gen->nreg;
+  insert_symbol(var, reg, lineno);
 }
 
 static struct inst * new_inst(struct codegen * gen, unsigned lineno) {
@@ -355,6 +371,18 @@ static void identifier_statement(struct codegen * gen, struct lex * lex) {
   }
   else
     error(lex->lineno, id, "label definition expected");
+}
+
+static void declare_statement(struct codegen * gen, struct lex * lex) {
+  get_variable(lex);
+  declare_variable(gen, lex->text, lex->lineno);
+  int tok;
+  while ((tok = get_token(lex)) == ',') {
+    get_variable(lex);
+    declare_variable(gen, lex->text, lex->lineno);
+  }
+  if (tok != TOK_EOL)
+    error(lex->lineno, lex->text, "comma or end of line expected");
 }
 
 static void match(int expected, const char* descrip, struct lex * lex) {
