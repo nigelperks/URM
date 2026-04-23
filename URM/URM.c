@@ -212,6 +212,7 @@ typedef struct {
   Integer nreg;
   Integer* regs;
   Integer pc;
+  unsigned next_cycle;
 } Machine;
 
 static Machine* new_machine(Integer max_user_reg) {
@@ -221,6 +222,8 @@ static Machine* new_machine(Integer max_user_reg) {
   // allocate register 0 so that register number in C = register number for user
   m->nreg = max_user_reg + 1; 
   m->regs = calloc(m->nreg, sizeof m->regs[0]);
+  m->pc = 0;
+  m->next_cycle = 0;
   return m;
 }
 
@@ -232,6 +235,8 @@ static void delete_machine(Machine* m) {
 }
 
 static void trace(const Machine* m, const Program* p) {
+  printf("%5u ", m->next_cycle);
+
   unsigned n = 0;
   if (m->pc == -1) {
     printf("%5s ", "STOP");
@@ -249,6 +254,7 @@ static void trace(const Machine* m, const Program* p) {
 }
 
 static void trace_heading(Integer nreg) {
+  fputs("CYCLE ", stdout);
   printf("%-*s", INST_FIELD, " INST");
   for (Integer i = 1; i < nreg; i++) {
     char buf[32];
@@ -285,10 +291,12 @@ static void execute(Machine* m, const ProgramInstruction* inst) {
 
 static void run_program(Machine* m, const Program* p) {
   m->pc = 1;
+  m->next_cycle = 1;
   trace_heading(m->nreg);
   while (m->pc < p->ninst) {
     trace(m, p);
     execute(m, &p->inst[m->pc]);
+    m->next_cycle++;
   }
   m->pc = -1;
   trace(m, p);
