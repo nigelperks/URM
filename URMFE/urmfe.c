@@ -459,10 +459,10 @@ static int get_token(struct lex * lex) {
   const char* start = lex->next;
   int tok;
 
-  if (isalpha(*lex->next)) {
+  if (isalpha(*lex->next) || *lex->next == '_') {
     do {
       lex->next++;
-    } while (isalnum(*lex->next));
+    } while (isalnum(*lex->next) || *lex->next == '_');
     tok = TOK_ID;
   }
   else if (isdigit(*lex->next)) {
