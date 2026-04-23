@@ -56,7 +56,9 @@ enum token_type {
   // keywords
   TOK_COPY,
   TOK_GOTO,
+  TOK_IF,
   TOK_INC,
+  TOK_THEN,
   TOK_TO,
   TOK_ZERO,
 };
@@ -67,8 +69,10 @@ static const struct keyword {
 } keywords[] = {
   { "copy", TOK_COPY },
   { "goto", TOK_GOTO },
+  { "if", TOK_IF },
   { "inc", TOK_INC },
   { "succ", TOK_INC },
+  { "then", TOK_THEN },
   { "to", TOK_TO },
   { "zero", TOK_ZERO },
   { NULL, TOK_INVALID },
@@ -138,6 +142,7 @@ static int get_token(struct lex *);
 
 static void copy_statement(struct codegen * gen, struct lex *);
 static void goto_statement(struct codegen * gen, struct lex *);
+static void if_statement(struct codegen * gen, struct lex *);
 static void inc_statement(struct codegen * gen, struct lex *);
 static void zero_statement(struct codegen * gen, struct lex *);
 static void identifier_statement(struct codegen * gen, struct lex *);
@@ -150,6 +155,7 @@ static void parse_statement(struct codegen * gen, unsigned lineno, char* buf) {
     switch (tok) {
       case TOK_COPY: copy_statement(gen, &lex); break;
       case TOK_GOTO: goto_statement(gen, &lex); break;
+      case TOK_IF: if_statement(gen, &lex); break;
       case TOK_INC: inc_statement(gen, &lex); break;
       case TOK_ZERO: zero_statement(gen, &lex); break;
       case TOK_ID: identifier_statement(gen, &lex); break;
@@ -316,6 +322,21 @@ static void goto_statement(struct codegen * gen, struct lex * lex) {
   if (label == NULL)
     label = insert_label(lex->text, 0, lex->lineno);
   emit_jump(gen, 1, 1, label, lex->lineno);
+}
+
+static void if_statement(struct codegen * gen, struct lex * lex) {
+  get_variable(lex);
+  unsigned reg1 = variable_register(gen, lex->text, lex->lineno);
+  match('=', "equality test", lex);
+  get_variable(lex);
+  unsigned reg2 = variable_register(gen, lex->text, lex->lineno);
+  match(TOK_THEN, "THEN", lex);
+  match(TOK_GOTO, "GOTO", lex);
+  match(TOK_ID, "label", lex);
+  struct label * label = lookup_label(lex->text);
+  if (label == NULL)
+    label = insert_label(lex->text, 0, lex->lineno);
+  emit_jump(gen, reg1, reg2, label, lex->lineno);
 }
 
 static void identifier_statement(struct codegen * gen, struct lex * lex) {
