@@ -55,6 +55,7 @@ enum token_type {
   TOK_EOL,
   TOK_ID,
   TOK_NUM,
+  TOK_ASSIGN,
   // keywords
   TOK_COPY,
   TOK_DECLARE,
@@ -309,6 +310,7 @@ static void output_program(struct codegen * gen) {
 }
 
 static void get_variable(struct lex *);
+static unsigned long get_number(struct lex *);
 static void match(int expected, const char* descrip, struct lex *);
 
 static void zero_statement(struct codegen * gen, struct lex * lex) {
@@ -355,22 +357,70 @@ static void if_statement(struct codegen * gen, struct lex * lex) {
   emit_jump(gen, reg1, reg2, label, lex->lineno);
 }
 
+static void define_label(struct codegen *, const char* id, unsigned lineno);
+static void assignment(struct codegen *, struct lex *, const char* id);
+
 static void identifier_statement(struct codegen * gen, struct lex * lex) {
   char id[MAX_TEXT];
   strcpy(id, lex->text);
   int tok = get_token(lex);
-  if (tok == ':') {
-    struct label * label = lookup_label(id);
-    if (label) {
-      if (label->inst)
-        error(lex->lineno, id, "label already defined");
-      label->inst = gen->ninst;
-    }
-    else
-      insert_label(id, gen->ninst, lex->lineno);
+  switch (tok) {
+    case ':': define_label(gen, id, lex->lineno); break;
+    case TOK_ASSIGN: assignment(gen, lex, id); break;
+    default: error(lex->lineno, id, "label definition or variable assignment expected"); break;
+  }
+}
+
+static void assign_number(struct codegen *, struct lex *, unsigned dst);
+static void assign_variable(struct codegen *, struct lex *, unsigned dst);
+
+// a := 0
+// a := a + 1
+// a := b
+static void assignment(struct codegen * gen, struct lex * lex, const char* id) {
+  unsigned dst = variable_register(gen, id, lex->lineno);
+  switch (get_token(lex)) {
+    case TOK_NUM: assign_number(gen, lex, dst); break;
+    case TOK_ID: assign_variable(gen, lex, dst); break;
+    default: error(lex->lineno, lex->text, "zero, copy, or increment expected");
+  }
+}
+
+// a := 0
+static void assign_number(struct codegen * gen, struct lex * lex, unsigned dst) {
+  if (atoi(lex->text) != 0)
+    error(lex->lineno, lex->text, "a variable can only be zeroed, not assigned an arbitrary number");
+  emit_zero(gen, dst, lex->lineno);
+}
+
+// a := a + 1
+// a := b
+static void assign_variable(struct codegen * gen, struct lex * lex, unsigned dst) {
+   unsigned src = variable_register(gen, lex->text, lex->lineno);
+   int tok = get_token(lex);
+   if (tok == TOK_EOL) {
+     emit_copy(gen, src, dst, lex->lineno);
+     return;
+   }
+   if (tok != '+')
+     error(lex->lineno, lex->text, "increment expected");
+   unsigned inc = get_number(lex);
+   if (inc != 1)
+     error(lex->lineno, lex->text, "a variable can only be incremented by 1");
+   if (src != dst)
+     error(lex->lineno, lex->text, "malformed copy or increment");
+   emit_succ(gen, dst, lex->lineno);
+}
+
+static void define_label(struct codegen * gen, const char* id, unsigned lineno) {
+  struct label * label = lookup_label(id);
+  if (label) {
+    if (label->inst)
+      error(lineno, id, "label already defined");
+    label->inst = gen->ninst;
   }
   else
-    error(lex->lineno, id, "label definition expected");
+    insert_label(id, gen->ninst, lineno);
 }
 
 static void declare_statement(struct codegen * gen, struct lex * lex) {
@@ -395,6 +445,13 @@ static void get_variable(struct lex * lex) {
   match(TOK_ID, "variable", lex);
 }
 
+static unsigned long get_number(struct lex * lex) {
+  int tok = get_token(lex);
+  if (tok != TOK_NUM)
+    error(lex->lineno, lex->text, "number expected");
+  return strtoul(lex->text, NULL, 10);
+}
+
 static int get_token(struct lex * lex) {
   while (isspace(*lex->next))
     lex->next++;
@@ -416,6 +473,15 @@ static int get_token(struct lex * lex) {
   }
   else if (*lex->next == '\0' || *lex->next == '\n' || *lex->next == ';')
     tok = TOK_EOL;
+  else if (*lex->next == ':') {
+    lex->next++;
+    if (*lex->next == '=') {
+      tok = TOK_ASSIGN;
+      lex->next++;
+    }
+    else
+      tok = ':';
+  }
   else {
     tok = *lex->next;
     lex->next++;
