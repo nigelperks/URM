@@ -119,21 +119,22 @@ static void init_codegen(struct codegen * gen) {
   gen->ninst = 1;
 }
 
-#define MAX_LOOP (4)
+#define MAX_CTRL (4)
 
-struct loop {
+struct ctrl_struct {
+  int type; // type of control structure: TOK_IF, TOK_WHILE
   unsigned lineno;
   struct label * test;
   struct label * out;
 };
 
 struct parser {
-  struct loop loops[MAX_LOOP];
-  unsigned nloop;
+  struct ctrl_struct ctrl[MAX_CTRL];
+  unsigned nctrl;
 };
 
 static void init_parser(struct parser * p) {
-  p->nloop = 0;
+  p->nctrl = 0;
 }
 
 static void parse_statement(struct parser *, struct codegen *, unsigned lineno, char*);
@@ -165,9 +166,14 @@ int main(void) {
 }
 
 static void check_control_structure(struct parser * parser) {
-  if (parser->nloop) {
-    struct loop * loop = &parser->loops[parser->nloop - 1];
-    error(loop->lineno, "WHILE", "unterminated loop");
+  if (parser->nctrl) {
+    struct ctrl_struct * cs = &parser->ctrl[parser->nctrl - 1];
+    const char* name = NULL;
+    switch (cs->type) {
+      case TOK_IF: name = "IF"; break;
+      case TOK_WHILE: name = "WHILE"; break;
+    }
+    error(cs->lineno, name, "unterminated control structure");
   }
 }
 
@@ -191,7 +197,7 @@ static void copy_statement(struct codegen * gen, struct lex *);
 static void declare_statement(struct codegen * gen, struct lex *);
 static void end_statement(struct parser *, struct codegen * gen, struct lex *);
 static void goto_statement(struct codegen * gen, struct lex *);
-static void if_statement(struct codegen * gen, struct lex *);
+static void if_statement(struct parser * parser, struct codegen * gen, struct lex *);
 static void inc_statement(struct codegen * gen, struct lex *);
 static void while_statement(struct parser *, struct codegen * gen, struct lex *);
 static void zero_statement(struct codegen * gen, struct lex *);
@@ -207,7 +213,7 @@ static void parse_statement(struct parser * parser, struct codegen * gen, unsign
       case TOK_DECLARE: declare_statement(gen, &lex); break;
       case TOK_END: end_statement(parser, gen, &lex); break;
       case TOK_GOTO: goto_statement(gen, &lex); break;
-      case TOK_IF: if_statement(gen, &lex); break;
+      case TOK_IF: if_statement(parser, gen, &lex); break;
       case TOK_INC: inc_statement(gen, &lex); break;
       case TOK_WHILE: while_statement(parser, gen, &lex); break;
       case TOK_ZERO: zero_statement(gen, &lex); break;
@@ -400,19 +406,48 @@ static void goto_statement(struct codegen * gen, struct lex * lex) {
   emit_jump(gen, 1, 1, label, lex->lineno);
 }
 
-static void if_statement(struct codegen * gen, struct lex * lex) {
+static struct ctrl_struct * control_structure(struct parser * parser, const char* token, unsigned lineno) {
+  if (parser->nctrl >= MAX_CTRL)
+    error(lineno, token, "maximum control structure nesting exceeded");
+  return &parser->ctrl[parser->nctrl++];
+}
+
+static void if_statement(struct parser * parser, struct codegen * gen, struct lex * lex) {
   get_variable(lex);
   unsigned reg1 = variable_register(gen, lex->text, lex->lineno);
-  match('=', "equality test", lex);
-  get_variable(lex);
-  unsigned reg2 = variable_register(gen, lex->text, lex->lineno);
-  match(TOK_THEN, "THEN", lex);
-  match(TOK_GOTO, "GOTO", lex);
-  match(TOK_ID, "label", lex);
-  struct label * label = lookup_label(lex->text);
-  if (label == NULL)
-    label = insert_label(lex->text, 0, lex->lineno);
-  emit_jump(gen, reg1, reg2, label, lex->lineno);
+
+  int tok = get_token(lex);
+
+  if (tok == '=') {
+    // IF a = b THEN GOTO k
+    get_variable(lex);
+    unsigned reg2 = variable_register(gen, lex->text, lex->lineno);
+    match(TOK_THEN, "THEN", lex);
+    match(TOK_GOTO, "GOTO", lex);
+    match(TOK_ID, "label", lex);
+    struct label * label = lookup_label(lex->text);
+    if (label == NULL)
+      label = insert_label(lex->text, 0, lex->lineno);
+    emit_jump(gen, reg1, reg2, label, lex->lineno);
+    return;
+  }
+
+  if (tok == TOK_UNEQUAL) {
+    // IF a != b THEN ... END IF
+    get_variable(lex);
+    unsigned reg2 = variable_register(gen, lex->text, lex->lineno);
+    match(TOK_THEN, "THEN", lex);
+    match(TOK_EOL, "end of line", lex);
+    struct ctrl_struct * cs = control_structure(parser, "IF", lex->lineno);
+    cs->lineno = lex->lineno;
+    cs->type = TOK_IF;
+    cs->test = NULL;
+    cs->out = gen_label(0, lex->lineno);
+    emit_jump(gen, reg1, reg2, cs->out, lex->lineno);
+    return;
+  }
+
+  error(lex->lineno, lex->text, "equality or inequality test expected");
 }
 
 static void while_statement(struct parser * parser, struct codegen * gen, struct lex * lex) {
@@ -421,23 +456,27 @@ static void while_statement(struct parser * parser, struct codegen * gen, struct
   match(TOK_UNEQUAL, "inequality test", lex);
   get_variable(lex);
   unsigned reg2 = variable_register(gen, lex->text, lex->lineno);
-  if (parser->nloop >= MAX_LOOP)
-    error(lex->lineno, "WHILE", "maximum loop nesting exceeded");
-  struct loop * loop = &parser->loops[parser->nloop++];
-  loop->lineno = lex->lineno;
-  loop->test = gen_label(gen->ninst, lex->lineno);
-  loop->out = gen_label(0, lex->lineno);
-  emit_jump(gen, reg1, reg2, loop->out, lex->lineno);
+  struct ctrl_struct * cs = control_structure(parser, "WHILE", lex->lineno);
+  cs->lineno = lex->lineno;
+  cs->type = TOK_WHILE;
+  cs->test = gen_label(gen->ninst, lex->lineno);
+  cs->out = gen_label(0, lex->lineno);
+  emit_jump(gen, reg1, reg2, cs->out, lex->lineno);
 }
 
 static void end_statement(struct parser * parser, struct codegen * gen, struct lex * lex) {
-  match(TOK_WHILE, "WHILE", lex);
-  if (parser->nloop == 0)
-    error(lex->lineno, "END WHILE", "no loop is in effect");
-  parser->nloop--;
-  struct loop * loop = &parser->loops[parser->nloop];
-  emit_jump(gen, 1, 1, loop->test, lex->lineno);
-  loop->out->inst = gen->ninst;
+  int tok = get_token(lex);
+  if (tok != TOK_IF && tok != TOK_WHILE)
+    error(lex->lineno, lex->text, "IF or WHILE expected");
+  if (parser->nctrl == 0)
+    error(lex->lineno, "END", "no control structure is in effect");
+  parser->nctrl--;
+  struct ctrl_struct * cs = &parser->ctrl[parser->nctrl];
+  if (tok != cs->type)
+    error(lex->lineno, lex->text, "mismatched control structures");
+  if (cs->type == TOK_WHILE)
+    emit_jump(gen, 1, 1, cs->test, lex->lineno);
+  cs->out->inst = gen->ninst;
 }
 
 static void define_label(struct codegen *, const char* id, unsigned lineno);
