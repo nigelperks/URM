@@ -19,6 +19,10 @@
 // bar := foo                  --> C(n,m)
 //
 // declare n, m ; allocate next registers to variables n, m
+//
+// while x != y
+// ...
+// end while
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -56,14 +60,17 @@ enum token_type {
   TOK_ID,
   TOK_NUM,
   TOK_ASSIGN,
+  TOK_UNEQUAL,
   // keywords
   TOK_COPY,
   TOK_DECLARE,
+  TOK_END,
   TOK_GOTO,
   TOK_IF,
   TOK_INC,
   TOK_THEN,
   TOK_TO,
+  TOK_WHILE,
   TOK_ZERO,
 };
 
@@ -73,12 +80,14 @@ static const struct keyword {
 } keywords[] = {
   { "copy", TOK_COPY },
   { "declare", TOK_DECLARE },
+  { "end", TOK_END },
   { "goto", TOK_GOTO },
   { "if", TOK_IF },
   { "inc", TOK_INC },
   { "succ", TOK_INC },
   { "then", TOK_THEN },
   { "to", TOK_TO },
+  { "while", TOK_WHILE },
   { "zero", TOK_ZERO },
   { NULL, TOK_INVALID },
 };
@@ -106,7 +115,25 @@ static void init_codegen(struct codegen * gen) {
   gen->ninst = 1;
 }
 
-static void parse_statement(struct codegen *, unsigned lineno, char*);
+#define MAX_LOOP (4)
+
+struct loop {
+  unsigned lineno;
+  struct label * test;
+  struct label * out;
+};
+
+struct parser {
+  struct loop loops[MAX_LOOP];
+  unsigned nloop;
+};
+
+static void init_parser(struct parser * p) {
+  p->nloop = 0;
+}
+
+static void parse_statement(struct parser *, struct codegen *, unsigned lineno, char*);
+static void check_control_structure(struct parser *);
 
 static void check_undefined_labels(struct codegen *);
 static void output_program(struct codegen *);
@@ -118,15 +145,26 @@ int main(void) {
   struct codegen gen;
   init_codegen(&gen);
 
+  struct parser parser;
+  init_parser(&parser);
+
   while (fgets(buf, sizeof buf, stdin)) {
     lineno++;
-    parse_statement(&gen, lineno, buf);
+    parse_statement(&parser, &gen, lineno, buf);
   }
 
+  check_control_structure(&parser);
   check_undefined_labels(&gen);
   output_program(&gen);
 
   return 0;
+}
+
+static void check_control_structure(struct parser * parser) {
+  if (parser->nloop) {
+    struct loop * loop = &parser->loops[parser->nloop - 1];
+    error(loop->lineno, "WHILE", "unterminated loop");
+  }
 }
 
 #define MAX_TEXT (32)
@@ -147,13 +185,15 @@ static int get_token(struct lex *);
 
 static void copy_statement(struct codegen * gen, struct lex *);
 static void declare_statement(struct codegen * gen, struct lex *);
+static void end_statement(struct parser *, struct codegen * gen, struct lex *);
 static void goto_statement(struct codegen * gen, struct lex *);
 static void if_statement(struct codegen * gen, struct lex *);
 static void inc_statement(struct codegen * gen, struct lex *);
+static void while_statement(struct parser *, struct codegen * gen, struct lex *);
 static void zero_statement(struct codegen * gen, struct lex *);
 static void identifier_statement(struct codegen * gen, struct lex *);
 
-static void parse_statement(struct codegen * gen, unsigned lineno, char* buf) {
+static void parse_statement(struct parser * parser, struct codegen * gen, unsigned lineno, char* buf) {
   struct lex lex;
   init_lex(&lex, lineno, buf);
   int tok = get_token(&lex);
@@ -161,9 +201,11 @@ static void parse_statement(struct codegen * gen, unsigned lineno, char* buf) {
     switch (tok) {
       case TOK_COPY: copy_statement(gen, &lex); break;
       case TOK_DECLARE: declare_statement(gen, &lex); break;
+      case TOK_END: end_statement(parser, gen, &lex); break;
       case TOK_GOTO: goto_statement(gen, &lex); break;
       case TOK_IF: if_statement(gen, &lex); break;
       case TOK_INC: inc_statement(gen, &lex); break;
+      case TOK_WHILE: while_statement(parser, gen, &lex); break;
       case TOK_ZERO: zero_statement(gen, &lex); break;
       case TOK_ID: identifier_statement(gen, &lex); break;
       default: error(lineno, lex.text, "statement expected");
@@ -224,6 +266,13 @@ static struct label * insert_label(const char* name, unsigned inst, unsigned lin
   labels[nlabel].name = _strdup(name); // TODO: check for null
   labels[nlabel].inst = inst;
   return &labels[nlabel++];
+}
+
+static struct label * gen_label(unsigned inst, unsigned lineno) {
+  char name[16];
+  static unsigned count = 0;
+  sprintf(name, "_%u", count++);
+  return insert_label(name, inst, lineno);
 }
 
 static unsigned variable_register(struct codegen * gen, const char* var, unsigned lineno) {
@@ -357,6 +406,31 @@ static void if_statement(struct codegen * gen, struct lex * lex) {
   emit_jump(gen, reg1, reg2, label, lex->lineno);
 }
 
+static void while_statement(struct parser * parser, struct codegen * gen, struct lex * lex) {
+  get_variable(lex);
+  unsigned reg1 = variable_register(gen, lex->text, lex->lineno);
+  match(TOK_UNEQUAL, "inequality test", lex);
+  get_variable(lex);
+  unsigned reg2 = variable_register(gen, lex->text, lex->lineno);
+  if (parser->nloop >= MAX_LOOP)
+    error(lex->lineno, "WHILE", "maximum loop nesting exceeded");
+  struct loop * loop = &parser->loops[parser->nloop++];
+  loop->lineno = lex->lineno;
+  loop->test = gen_label(gen->ninst, lex->lineno);
+  loop->out = gen_label(0, lex->lineno);
+  emit_jump(gen, reg1, reg2, loop->out, lex->lineno);
+}
+
+static void end_statement(struct parser * parser, struct codegen * gen, struct lex * lex) {
+  match(TOK_WHILE, "WHILE", lex);
+  if (parser->nloop == 0)
+    error(lex->lineno, "END WHILE", "no loop is in effect");
+  parser->nloop--;
+  struct loop * loop = &parser->loops[parser->nloop];
+  emit_jump(gen, 1, 1, loop->test, lex->lineno);
+  loop->out->inst = gen->ninst;
+}
+
 static void define_label(struct codegen *, const char* id, unsigned lineno);
 static void assignment(struct codegen *, struct lex *, const char* id);
 
@@ -481,6 +555,15 @@ static int get_token(struct lex * lex) {
     }
     else
       tok = ':';
+  }
+  else if (*lex->next == '!') {
+    lex->next++;
+    if (*lex->next == '=') {
+      tok = TOK_UNEQUAL;
+      lex->next++;
+    }
+    else
+      tok = '!';
   }
   else {
     tok = *lex->next;
