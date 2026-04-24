@@ -18,6 +18,8 @@
 // foo := foo + 1              --> S(n)
 // bar := foo                  --> C(n,m)
 //
+// foo := n                    --> Z(n), S(n), S(n), ...
+//
 // declare n, m ; allocate next registers to variables n, m
 //
 // while x != y
@@ -462,9 +464,10 @@ static void assignment(struct codegen * gen, struct lex * lex, const char* id) {
 
 // a := 0
 static void assign_number(struct codegen * gen, struct lex * lex, unsigned dst) {
-  if (atoi(lex->text) != 0)
-    error(lex->lineno, lex->text, "a variable can only be zeroed, not assigned an arbitrary number");
   emit_zero(gen, dst, lex->lineno);
+  unsigned long n = strtoul(lex->text, NULL, 10);
+  while (n--)
+    emit_succ(gen, dst, lex->lineno);
 }
 
 // a := a + 1
