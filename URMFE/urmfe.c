@@ -19,6 +19,8 @@
 // bar := foo                  --> C(n,m)
 //
 // foo := n                    --> Z(n), S(n), S(n), ...
+// inc foo, n                  --> S(n), S(n), ...
+// foo := foo + n              --> S(n), S(n), ...
 //
 // declare n, m ; allocate next registers to variables n, m
 //
@@ -373,7 +375,12 @@ static void zero_statement(struct codegen * gen, struct lex * lex) {
 static void inc_statement(struct codegen * gen, struct lex * lex) {
   get_variable(lex);
   unsigned reg = variable_register(gen, lex->text, lex->lineno);
-  emit_succ(gen, reg, lex->lineno);
+  unsigned long n = 1;
+  int tok = get_token(lex);
+  if (tok == ',')
+    n = get_number(lex);
+  while (n--)
+    emit_succ(gen, reg, lex->lineno);
 }
 
 static void copy_statement(struct codegen * gen, struct lex * lex) {
@@ -482,11 +489,10 @@ static void assign_variable(struct codegen * gen, struct lex * lex, unsigned dst
    if (tok != '+')
      error(lex->lineno, lex->text, "increment expected");
    unsigned inc = get_number(lex);
-   if (inc != 1)
-     error(lex->lineno, lex->text, "a variable can only be incremented by 1");
    if (src != dst)
      error(lex->lineno, lex->text, "malformed copy or increment");
-   emit_succ(gen, dst, lex->lineno);
+   while (inc--)
+     emit_succ(gen, dst, lex->lineno);
 }
 
 static void define_label(struct codegen * gen, const char* id, unsigned lineno) {
