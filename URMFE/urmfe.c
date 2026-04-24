@@ -24,9 +24,17 @@
 //
 // declare n, m ; allocate next registers to variables n, m
 //
-// while x != y
+// if x != y                   --> J(x,y,out_label)
 // ...
-// end while
+// end if
+//
+// while x != y                --> J(x,y,out_label)
+// ...
+// end while                   --> J(1,1,test_label)
+//
+// for i := k to n             --> Z(i), S(i), S(i), ..., J(i,n,out_label)
+// ...
+// end for                     --> S(i), J(1,1,test_label)
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -69,6 +77,7 @@ enum token_type {
   TOK_COPY,
   TOK_DECLARE,
   TOK_END,
+  TOK_FOR,
   TOK_GOTO,
   TOK_IF,
   TOK_INC,
@@ -85,6 +94,7 @@ static const struct keyword {
   { "copy", TOK_COPY },
   { "declare", TOK_DECLARE },
   { "end", TOK_END },
+  { "for", TOK_FOR },
   { "goto", TOK_GOTO },
   { "if", TOK_IF },
   { "inc", TOK_INC },
@@ -126,6 +136,7 @@ struct ctrl_struct {
   unsigned lineno;
   struct label * test;
   struct label * out;
+  unsigned reg;
 };
 
 struct parser {
@@ -196,6 +207,7 @@ static int get_token(struct lex *);
 static void copy_statement(struct codegen * gen, struct lex *);
 static void declare_statement(struct codegen * gen, struct lex *);
 static void end_statement(struct parser *, struct codegen * gen, struct lex *);
+static void for_statement(struct parser *, struct codegen * gen, struct lex *);
 static void goto_statement(struct codegen * gen, struct lex *);
 static void if_statement(struct parser * parser, struct codegen * gen, struct lex *);
 static void inc_statement(struct codegen * gen, struct lex *);
@@ -212,6 +224,7 @@ static void parse_statement(struct parser * parser, struct codegen * gen, unsign
       case TOK_COPY: copy_statement(gen, &lex); break;
       case TOK_DECLARE: declare_statement(gen, &lex); break;
       case TOK_END: end_statement(parser, gen, &lex); break;
+      case TOK_FOR: for_statement(parser, gen, &lex); break;
       case TOK_GOTO: goto_statement(gen, &lex); break;
       case TOK_IF: if_statement(parser, gen, &lex); break;
       case TOK_INC: inc_statement(gen, &lex); break;
@@ -443,6 +456,7 @@ static void if_statement(struct parser * parser, struct codegen * gen, struct le
     cs->type = TOK_IF;
     cs->test = NULL;
     cs->out = gen_label(0, lex->lineno);
+    cs->reg = 0;
     emit_jump(gen, reg1, reg2, cs->out, lex->lineno);
     return;
   }
@@ -461,21 +475,49 @@ static void while_statement(struct parser * parser, struct codegen * gen, struct
   cs->type = TOK_WHILE;
   cs->test = gen_label(gen->ninst, lex->lineno);
   cs->out = gen_label(0, lex->lineno);
+  cs->reg = 0;
   emit_jump(gen, reg1, reg2, cs->out, lex->lineno);
+}
+
+static void for_statement(struct parser * parser, struct codegen * gen, struct lex * lex) {
+  get_variable(lex);
+  unsigned index = variable_register(gen, lex->text, lex->lineno);
+  match(TOK_ASSIGN, ":=", lex);
+  unsigned long n = get_number(lex);
+  match(TOK_TO, "TO", lex);
+  get_variable(lex);
+  unsigned limit = variable_register(gen, lex->text, lex->lineno);
+  struct ctrl_struct * cs = control_structure(parser, "FOR", lex->lineno);
+  cs->lineno = lex->lineno;
+  cs->type = TOK_FOR;
+  emit_zero(gen, index, lex->lineno);
+  while (n--)
+    emit_succ(gen, index, lex->lineno);
+  cs->test = gen_label(gen->ninst, lex->lineno);
+  cs->out = gen_label(0, lex->lineno);
+  cs->reg = index;
+  emit_jump(gen, index, limit, cs->out, lex->lineno);
 }
 
 static void end_statement(struct parser * parser, struct codegen * gen, struct lex * lex) {
   int tok = get_token(lex);
-  if (tok != TOK_IF && tok != TOK_WHILE)
-    error(lex->lineno, lex->text, "IF or WHILE expected");
+  if (tok != TOK_FOR && tok != TOK_IF && tok != TOK_WHILE)
+    error(lex->lineno, lex->text, "FOR, IF or WHILE expected");
   if (parser->nctrl == 0)
     error(lex->lineno, "END", "no control structure is in effect");
   parser->nctrl--;
   struct ctrl_struct * cs = &parser->ctrl[parser->nctrl];
   if (tok != cs->type)
     error(lex->lineno, lex->text, "mismatched control structures");
-  if (cs->type == TOK_WHILE)
-    emit_jump(gen, 1, 1, cs->test, lex->lineno);
+  switch (cs->type) {
+    case TOK_FOR:
+      emit_succ(gen, cs->reg, lex->lineno);
+      emit_jump(gen, 1, 1, cs->test, lex->lineno);
+      break;
+    case TOK_WHILE:
+      emit_jump(gen, 1, 1, cs->test, lex->lineno);
+      break;
+  }
   cs->out->inst = gen->ninst;
 }
 
