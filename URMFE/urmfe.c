@@ -154,7 +154,10 @@ static void check_control_structure(struct parser *);
 static void check_undefined_labels(struct codegen *);
 static void output_program(struct codegen *);
 
-int main(void) {
+int main(int argc, char* argvp[]) {
+  if (argc > 1)
+    fatal("usage: URMFE < input.ufe > ouput.urm\n");
+
   char buf[128];
   unsigned lineno = 0;
 
