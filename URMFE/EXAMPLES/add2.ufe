@@ -1,0 +1,5 @@
+declare n, m
+while count != m
+  n := n + 1
+  m := m + 1
+end while

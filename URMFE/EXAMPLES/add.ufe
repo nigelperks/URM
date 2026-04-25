@@ -1,0 +1,7 @@
+declare n, m
+test:
+if count = m then goto stop
+inc n
+inc count
+goto test
+stop:

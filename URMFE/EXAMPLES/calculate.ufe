@@ -1,0 +1,14 @@
+; 3n + 5m
+
+declare n, m
+r := 0
+
+for count := 0 to n
+  r := r + 3
+end for
+
+for count := 0 to m
+  r := r + 5
+end for
+
+n := r

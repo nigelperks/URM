@@ -1,0 +1,4 @@
+declare n, m
+for count := 0 to m
+  n := n + 1
+end for
