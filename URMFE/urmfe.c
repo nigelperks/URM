@@ -121,12 +121,16 @@ struct codegen {
   unsigned nreg;
   struct inst inst[MAX_INST];
   unsigned ninst;
+  bool jump_emitted;
+  unsigned non_zero_regs;
 };
 
 static void init_codegen(struct codegen * gen) {
   gen->nreg = 0;
   gen->inst[0].type = URM_NOOP;
   gen->ninst = 1;
+  gen->jump_emitted = false;
+  gen->non_zero_regs = 0;
 }
 
 #define MAX_CTRL (4)
@@ -322,6 +326,8 @@ static void declare_variable(struct codegen * gen, const char* var, unsigned lin
   gen->nreg++;
   reg = gen->nreg;
   insert_symbol(var, reg, lineno);
+  if (reg > gen->non_zero_regs)
+    gen->non_zero_regs = reg;
 }
 
 static struct inst * new_inst(struct codegen * gen, unsigned lineno) {
@@ -331,15 +337,21 @@ static struct inst * new_inst(struct codegen * gen, unsigned lineno) {
 }
 
 static void emit_zero(struct codegen * gen, unsigned reg, unsigned lineno) {
-  struct inst * i = new_inst(gen, lineno);
-  i->type = URM_ZERO;
-  i->reg1 = reg;
+  // If no jumps have been emitted, and this register has not been
+  // incremented or copied to or initialised to an input value, it is zero already.
+  if (gen->jump_emitted || reg <= gen->non_zero_regs) {
+    struct inst * i = new_inst(gen, lineno);
+    i->type = URM_ZERO;
+    i->reg1 = reg;
+  }
 }
 
 static void emit_succ(struct codegen * gen, unsigned reg, unsigned lineno) {
   struct inst * i = new_inst(gen, lineno);
   i->type = URM_SUCC;
   i->reg1 = reg;
+  if (reg > gen->non_zero_regs)
+    gen->non_zero_regs = reg;
 }
 
 static void emit_copy(struct codegen * gen, unsigned src, unsigned dst, unsigned lineno) {
@@ -347,6 +359,8 @@ static void emit_copy(struct codegen * gen, unsigned src, unsigned dst, unsigned
   i->type = URM_COPY;
   i->reg1 = src;
   i->reg2 = dst;
+  if (src <= gen->non_zero_regs && dst > gen->non_zero_regs)
+    gen->non_zero_regs = dst;
 }
 
 static void emit_jump(struct codegen * gen, unsigned reg1, unsigned reg2, struct label * label, unsigned lineno) {
@@ -355,6 +369,7 @@ static void emit_jump(struct codegen * gen, unsigned reg1, unsigned reg2, struct
   i->reg1 = reg1;
   i->reg2 = reg2;
   i->label = label;
+  gen->jump_emitted = true;
 }
 
 static void check_undefined_labels(struct codegen * gen) {
