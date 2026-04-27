@@ -96,4 +96,37 @@ not the final value for which the loop body is executed.
 This language is meant to be a more convenient notation and abbreviation
 for URM operations, just one step up from the URM code.
 
+## URM2FE
+
+Convert a URM program into the frontend language for easier comprehension.
+
+The arguments are the URM program and names for registers R1, R2, ... .
+
+Option `-N`, where `N` is a number, specifies the number of input registers.
+
+For example, to convert `square.urm`:
+
+    URM2FE.exe -1 square.urm n copies count result
+
+treats 1 register as input:
+
+    ; input registers
+    declare n
+
+and the remaining names as working registers:
+
+    ; other registers used
+    declare copies, count, result
+
+then produces notation that should be easier to understand than raw URM instructions,
+at least for someone used to pseudocode:
+
+      if n = result then goto L3
+      copy n to result
+    L1:
+      inc copies
+      ...
+
+Option `-a` uses the alternative assignment notation instead of `zero`, `inc` and `copy`.
+
 Nigel Perks, 2026
